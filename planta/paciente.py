@@ -1,44 +1,28 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "id": "b0310229",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "import numpy as np\n",
-    "\n",
-    "class Paciente:\n",
-    "    def __init__(self, teta_real, P0, vetor_ruido):\n",
-    "        self.teta_real = np.array(teta_real)\n",
-    "        self.P0 = P0\n",
-    "        self.ruido = vetor_ruido\n",
-    "\n",
-    "        self.P_hist = np.zeros(100)\n",
-    "        self.I_hist = np.zeros(100)\n",
-    "\n",
-    "    def step(self, I_k, k):\n",
-    "        self.I_hist = np.roll(self.I_hist, 1)\n",
-    "        self.I_hist[0] = I_k\n",
-    "\n",
-    "        a1, b1, bm = self.teta_real\n",
-    "\n",
-    "        P_k = -a1 * self.P_hist[0] + b1 * self.I_hist[1] + bm * self.I_hist[2] + self.ruido[k]\n",
-    "\n",
-    "        self.P_hist = np.roll(self.P_hist, 1)\n",
-    "        self.P_hist[0] = P_k\n",
-    "\n",
-    "        MAP = self.P0 - P_k\n",
-    "        return MAP, P_k"
-   ]
-  }
- ],
- "metadata": {
-  "language_info": {
-   "name": "python"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 5
-}
+import numpy as np
+import random
+
+class Paciente:
+    def __init__(self, teta_real, d_real, m_real, P0, sigma):
+        self.teta_real = np.array(teta_real)
+        self.d = int(d_real)
+        self.m = int(m_real)
+        self.P0 = P0
+        self.sigma = sigma
+        self.P_histo = np.zeros(200)
+        self.I_histo = np.zeros(200)
+
+    def step(self, I_atual_k_menos_1):
+        self.I_histo = np.roll(self.I_histo, 1)
+        self.I_histo[0] = I_atual_k_menos_1
+        P_ante_1 = self.P_histo[0]
+        idx_d = self.d - 1
+        I_ante_d  = self.I_histo[idx_d]  if idx_d  < len(self.I_histo) else 0.0
+        idx_dm    = self.d + self.m - 1
+        I_ante_dm = self.I_histo[idx_dm] if idx_dm < len(self.I_histo) else 0.0
+        fi = np.array([-P_ante_1, I_ante_d, I_ante_dm])
+        ruido_e = random.gauss(0, self.sigma)
+        P_k = self.teta_real @ fi + ruido_e
+        MAP = self.P0 - P_k
+        self.P_histo = np.roll(self.P_histo, 1)
+        self.P_histo[0] = P_k
+        return MAP, P_k, ruido_e
