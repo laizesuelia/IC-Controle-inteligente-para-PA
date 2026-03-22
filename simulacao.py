@@ -1,33 +1,21 @@
 import numpy as np
 import random
-
-# Importando os Modelos, Identificador e Controladores
 from planta.paciente import Paciente
-from identificador.rls import Identificador
-from controladores.gpc_fixo import ControladorGPC
-from controladores.gpc_adaptativo import ControladorGPCAdaptativo
-from controladores.pertubacao import Controlador_Perturbacao
-from controladores.restricoes import ControladorGPC_Restricao
-from controladores.idc import ControladorIDC
-from controladores.pid import Controlador_PID_Adaptativo
-
-# Importando nossos utilitários visuais e de métricas
-from utils.graficos import plotar_resultados
-from utils.metricas import exibir_tabela_desempenho
+from identificador.rls import IdentificadorMultiModelo
+from controladores import (
+    ControladorGPC, ControladorGPCAdaptativo, ControladorIDC, 
+    Controlador_PID_Adaptativo, Controlador_Perturbacao, ControladorGPC_Restricao
+)
 
 def run_simulacao(passos_totais=500, sigma_e=1.5, MAP_desejado=100.0, semente=120):
-    # --- 1. CONFIGURAÇÃO GERAL ---
     np.random.seed(semente)
     vetor_ruido_fixo = np.random.normal(0, sigma_e, passos_totais)
     P_ref = 150.0 - MAP_desejado
     passos_prbs = 15
-    
     nomes_modelos = ['IDC', 'GPC_Fixo', 'GPC_Adaptativo', 'PID_Adaptativo', 'Controlador_Perturbacao', 'Controlador_Restricao']
     
-    # --- 2. INSTANCIANDO OS OBJETOS ISOLADOS ---
     pacientes = {nome: Paciente(vetor_ruido_fixo) for nome in nomes_modelos}
-    ids = {nome: Identificador(sigma_e=sigma_e) for nome in nomes_modelos}
-    
+    ids = {nome: IdentificadorMultiModelo(sigma_e=sigma_e) for nome in nomes_modelos}
     controladores = {
         'IDC': ControladorIDC(lambda_idc=0.1),
         'GPC_Fixo': ControladorGPC(rho=0.5),
@@ -37,7 +25,6 @@ def run_simulacao(passos_totais=500, sigma_e=1.5, MAP_desejado=100.0, semente=12
         'Controlador_Restricao': ControladorGPC_Restricao(rho=1.5, I_min=0.0, I_max=180.0)
     }
     
-    # --- 3. ESTRUTURA PARA SALVAR OS RESULTADOS ---
     resultados = {nome: {
         'historico_MAP': [], 'historico_I': [], 'hist_rho': [],
         'hist_a1': [], 'hist_b1': [], 'hist_bm1': [],
@@ -46,29 +33,24 @@ def run_simulacao(passos_totais=500, sigma_e=1.5, MAP_desejado=100.0, semente=12
         'hist_custo': {2: [], 3: [], 4: [], 5: []}
     } for nome in nomes_modelos}
     
-    # --- 4. LAÇO DE SIMULAÇÃO UNIFICADO ---
     for k in range(passos_totais):
-        
-        # Injeção de Distúrbios Fisiológicos (Iguais para todos)
-        '''
         for p in pacientes.values():
-            if 200 <= k < 250:   p.b1 += (0.300 - 0.187) / 50.0; p.d = 2
-            elif k == 350:       p.d = 4
-        '''
-
-        # Roda cada arquitetura de forma independente
+            if 200 <= k < 250:
+                p.b1 += (0.300 - 0.187) / 50.0
+                p.d = 2
+            elif k == 350:
+                p.d = 4
+                
         for nome in nomes_modelos:
             p = pacientes[nome]
             ident = ids[nome]
             ctrl = controladores[nome]
             res = resultados[nome]
             
-            # Pega as melhores estimativas do instante atual
             melhor_d0 = min(ident.erros_quadraticos, key=ident.erros_quadraticos.get)
             theta_hat = ident.theta_hat[melhor_d0]
             P_cov = ident.P_cov[melhor_d0]
             
-            # --- CÁLCULO DO SINAL DE CONTROLE ---
             if k < passos_prbs:
                 I_k = 10.0 if np.random.rand() > 0.5 else 0.0
                 if nome == 'GPC_Adaptativo':
@@ -78,8 +60,7 @@ def run_simulacao(passos_totais=500, sigma_e=1.5, MAP_desejado=100.0, semente=12
                     MAP_atual = p.P0 - p.P_hist[0]
                     I_k = ctrl.calcular_controle(MAP_desejado, MAP_atual, theta_hat[1])
                 else:
-                    K0 = ctrl.calcular_K0(theta_hat, melhor_d0, p.P_hist[0], p.I_hist)
-                    
+                    K0 = ctrl.calcular_KO(theta_hat, melhor_d0, p.P_hist[0], p.I_hist)
                     if nome == 'IDC':
                         I_k = ctrl.calcular_controle(K0, theta_hat, P_cov, P_ref)
                     elif nome == 'GPC_Fixo':
@@ -92,24 +73,19 @@ def run_simulacao(passos_totais=500, sigma_e=1.5, MAP_desejado=100.0, semente=12
                     elif nome == 'Controlador_Restricao':
                         MAP_atual = p.P0 - p.P_hist[0]
                         I_k = ctrl.calcular_controle(K0, theta_hat, P_ref, MAP_atual)
-                        #I_k = ctrl.calcular_controle(K0, theta_hat, P_ref)
-
-            # --- APLICAÇÃO NA PLANTA ---
+                        
             MAP_medida, P_k_medida = p.atualizar(I_k, k)
             res['historico_I'].append(I_k)
             res['historico_MAP'].append(MAP_medida)
             
-            # --- CÁLCULO DA INOVAÇÃO (Para o Controlador 3.5 respirar) ---
             P_ant = p.P_hist[1] if k > 0 else 0.0
             if nome == 'GPC_Adaptativo':
                 phi_pred = np.array([-P_ant, p.I_hist[melhor_d0], p.I_hist[2*melhor_d0]])
                 erro_preditivo = P_k_medida - np.dot(theta_hat, phi_pred)
                 ctrl.atualizar_rho(erro_preditivo)
-            
-            # --- IDENTIFICAÇÃO (RLS) ---
+                
             d_opt, th_opt, cov_opt = ident.estimar(P_k_medida, P_ant, p.I_hist)
             
-            # --- SALVANDO HISTÓRICOS ---
             res['hist_a1'].append(th_opt[0])
             res['hist_b1'].append(th_opt[1])
             res['hist_bm1'].append(th_opt[2])
@@ -119,7 +95,8 @@ def run_simulacao(passos_totais=500, sigma_e=1.5, MAP_desejado=100.0, semente=12
             res['d0_hist'].append(d_opt)
             res['d0_real'].append(p.d)
             res['hist_var_b1'].append(cov_opt[1, 1])
+            
             for d in ident.atrasos:
                 res['hist_custo'][d].append(ident.erros_quadraticos[d])
-
+                
     return resultados
