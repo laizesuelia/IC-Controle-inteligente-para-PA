@@ -1,9 +1,9 @@
 import numpy as np
-import random
 
 # CONTROLADOR 3.3 — COM RESTRIÇÕES
 import random 
 random.seed(42)
+
 class ControladorGPC_Restricao:
     # ro=0.5 (GPC Clássico padrão) ou ro=1.5 (GPC 3.3 mais conservador)
     def __init__(self, rho=1.5, I_min=0.0, I_max=180.0):
