@@ -7,7 +7,7 @@ from identificador.rls import Identificador
 from controladores.gpc_fixo import ControladorGPC
 from controladores.gpc_adaptativo import ControladorGPCAdaptativo
 from controladores.pertubacao import Controlador_Perturbacao
-from controladores.restricoes import Controlador_Restricoes
+from controladores.restricoes import ControladorGPC_Restricao
 from controladores.idc import ControladorIDC
 from controladores.pid import Controlador_PID_Adaptativo
 
