@@ -1,11 +1,19 @@
 import numpy as np
 import random
+
+# Importa a planta
 from planta.paciente import Paciente
+
+# Importa o identificador (certifique-se de que o arquivo se chama rls.py)
 from identificador.rls import IdentificadorMultiModelo
-from controladores import (
-    ControladorGPC, ControladorGPCAdaptativo, ControladorIDC, 
-    Controlador_PID_Adaptativo, Controlador_Perturbacao, ControladorGPC_Restricao
-)
+
+# Importa CADA controlador do seu respectivo arquivo
+from controladores.gpc_fixo import ControladorGPC
+from controladores.gpc_adaptativo import ControladorGPCAdaptativo
+from controladores.pertubacao import Controlador_Perturbacao  # Mantive o nome do seu arquivo sem 'r'
+from controladores.restricoes import ControladorGPC_Restricao
+from controladores.idc import ControladorIDC
+from controladores.pid import Controlador_PID_Adaptativo
 
 def run_simulacao(passos_totais=500, sigma_e=1.5, MAP_desejado=100.0, semente=120):
     np.random.seed(semente)
