@@ -2,14 +2,12 @@ import numpy as np
 import random
 
 class Controlador_Perturbacao:
-    # amplitude inicial do ruído e taxa de decaimento (0.997 = perde 0.3% de força a cada passo)
     def __init__(self, amplitude=8.0, taxa_decaimento=0.997, I_min=0.0, I_max=180.0):
         self.amp = amplitude
         self.decay = taxa_decaimento
         self.I_min = I_min
         self.I_max = I_max
 
-    # O cálculo de K0 é o padrão, usando a memória da planta
     def calcular_K0(self, theta_hat, d0, P_k, I_hist):
         a1_hat, b1_hat, bm1_hat = theta_hat
         K0 = ((-a1_hat)**d0) * P_k
@@ -20,19 +18,10 @@ class Controlador_Perturbacao:
         return K0
 
     def calcular_controle(self, K0, theta_hat, P_ref):
-        # Trava de segurança clínica para evitar divisão por zero
         b1_ctrl = max(theta_hat[1], 0.01)
-
-        # 1. Lei de Controle Nominal (Variância Mínima / GPC puro sem rho)
         I_mvc = (P_ref - K0) / b1_ctrl
-
-        # 2. Perturbação Ativa (Ruído PRBS artificial decrescente)
         bit = 1 if np.random.rand() > 0.5 else -1
-        u_p = bit
-        
-
-        # 3. Sinal Final (Controle Nominal + Perturbação)
-        I_k = I_mvc + u_p
-
-        # Saturação fisiológica
+        up = self.amp * bit
+        self.amp *= self.decay
+        I_k = I_mvc + up
         return max(self.I_min, min(I_k, self.I_max))

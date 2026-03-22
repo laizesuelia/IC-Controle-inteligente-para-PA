@@ -1,28 +1,32 @@
 import numpy as np
-import random
 
 class Paciente:
-    def __init__(self, teta_real, d_real, m_real, P0, sigma):
-        self.teta_real = np.array(teta_real)
-        self.d = int(d_real)
-        self.m = int(m_real)
+    def __init__(self, vetor_ruidos, P0=150, a1=-0.741, b1=0.187, bm1=0.075, d=3, m=3):
         self.P0 = P0
-        self.sigma = sigma
-        self.P_histo = np.zeros(200)
-        self.I_histo = np.zeros(200)
+        self.a1 = a1
+        self.b1 = b1
+        self.b1_base = 0.187
+        self.bm1 = bm1
+        self.d = d
+        self.m = m
+        self.vetor_ruidos = vetor_ruidos
+        
+        self.P_hist = np.zeros(20)
+        self.I_hist = np.zeros(20)
 
-    def step(self, I_atual_k_menos_1):
-        self.I_histo = np.roll(self.I_histo, 1)
-        self.I_histo[0] = I_atual_k_menos_1
-        P_ante_1 = self.P_histo[0]
-        idx_d = self.d - 1
-        I_ante_d  = self.I_histo[idx_d]  if idx_d  < len(self.I_histo) else 0.0
-        idx_dm    = self.d + self.m - 1
-        I_ante_dm = self.I_histo[idx_dm] if idx_dm < len(self.I_histo) else 0.0
-        fi = np.array([-P_ante_1, I_ante_d, I_ante_dm])
-        ruido_e = random.gauss(0, self.sigma)
-        P_k = self.teta_real @ fi + ruido_e
+    def atualizar(self, I_k, k):
+        self.I_hist = np.roll(self.I_hist, 1)
+        self.I_hist[0] = I_k
+        self.b1 = self.b1_base + 0.1 * np.sin(2 * np.pi * 1/1200 * k + 15)
+        
+        e_k = self.vetor_ruidos[k]
+        
+        P_k = self.a1 * self.P_hist[0] + \
+              self.b1 * self.I_hist[self.d] + \
+              self.bm1 * self.I_hist[self.d + self.m] + e_k
+              
+        self.P_hist = np.roll(self.P_hist, 1)
+        self.P_hist[0] = P_k
         MAP = self.P0 - P_k
-        self.P_histo = np.roll(self.P_histo, 1)
-        self.P_histo[0] = P_k
-        return MAP, P_k, ruido_e
+        
+        return MAP, P_k
