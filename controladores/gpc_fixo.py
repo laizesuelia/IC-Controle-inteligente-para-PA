@@ -1,45 +1,42 @@
 import numpy as np
 import random
 
-class Controlador_GPC_Fixo:
-    def __init__(self, teta_fixo, d_fixo, m_fixo, ro=1.5):
-        self.a1, self.b1, self.bm = teta_fixo
-        self.d  = int(d_fixo)
-        self.m  = int(m_fixo)
-        self.ro = ro
-        self.k  = 0
-        self.I_ante_1 = 0.0
-        self.I_histo  = np.zeros(100)
+class ControladorGPC:
+    
+    def __init__(self, rho=0.5, I_min=0.0, I_max=180.0):
+        self.rho = rho
+        self.I_min = I_min
+        self.I_max = I_max
+        self.I_k_minus_1 = 0.0
 
-    def calcular_controle(self, P_ref, P_k_medido, teta_est, d_est, m_est, inovacao_k, P_cov):
-        # P_cov ignorado — parâmetros congelados, não usa RLS nem covariância
-        self.k += 1
-        b1_ctrl = max(self.b1, 0.01)
+    # --- cálculo do termo determinístico da predição ---
+    def calcular_K0(self, theta_hat, d0, P_k, I_hist):
+        
+        a1_hat, b1_hat, bm1_hat = theta_hat
+        
+        K0 = ((-a1_hat)**d0) * P_k
+        K0 += bm1_hat * I_hist[d0]
 
-        if self.k <= 10:
-            PRBS = 10.0
-            if self.k > 5:
-                PRBS = 60 - (60 / 3.8) * abs(self.b1)
-            I_calculado = PRBS if random.random() > 0.5 else 0.0
-            I_calculado = np.clip(I_calculado, 0, 180)
-            self.I_histo = np.roll(self.I_histo, 1)
-            self.I_histo[0] = I_calculado
-            self.I_ante_1 = I_calculado
-            return I_calculado
+        for i in range(1, d0):
+            K0 += ((-a1_hat)**i) * b1_hat * I_hist[i]
+            K0 += ((-a1_hat)**i) * bm1_hat * I_hist[d0 + i]
 
-        k0 = (-self.a1) ** self.d * P_k_medido
-        for i in range(1, self.d):
-            t1 = b1_ctrl * self.I_histo[i]          if i          < len(self.I_histo) else 0.0
-            t2 = self.bm * self.I_histo[self.m + i] if self.m + i < len(self.I_histo) else 0.0
-            k0 += (-self.a1) ** i * (t1 + t2)
-        if self.m < len(self.I_histo):
-            k0 += self.bm * self.I_histo[self.m]
+        return K0
 
-        num = b1_ctrl * (P_ref - k0) + self.ro * self.I_ante_1
-        den = b1_ctrl ** 2 + self.ro
-        I_calculado = np.clip(num / max(den, 1e-6), 0, 180)
+    # --- lei de controle GPC ---
+    def calcular_controle(self, K0, theta_hat, P_ref):
+        
+        b1_hat = theta_hat[1]
 
-        self.I_histo = np.roll(self.I_histo, 1)
-        self.I_histo[0] = I_calculado
-        self.I_ante_1 = I_calculado
-        return I_calculado
+        numerador = b1_hat * (P_ref - K0) + self.rho * self.I_k_minus_1
+        denominador = max((b1_hat**2) + self.rho, 1e-6)
+
+        I_k = numerador / denominador
+
+        # Saturação fisiológica
+        I_k = max(self.I_min, min(I_k, self.I_max))
+
+        # guarda para próxima iteração
+        self.I_k_minus_1 = I_k
+
+        return I_k

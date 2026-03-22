@@ -1,58 +1,53 @@
 import numpy as np
 
 class Identificador:
-    def __init__(self, lambda_val, d_vetor, m_vetor, N_sim):
-        self.lambda_val  = lambda_val
-        self.d_vetor     = np.array(d_vetor)
-        self.m_vetor     = np.array(m_vetor)
-        self.k           = 0
-        self.teta_ea     = np.zeros(12)
-        self.Pant        = np.kron(np.eye(4), 10 * np.eye(3))
-        self.histo_erro  = np.zeros((N_sim, 4))
-        self.fator       = np.zeros(4)
-        self.P_histo     = np.zeros(100)
-        self.I_histo     = np.zeros(100)
-        self.ind_melhor  = 0
-        self.teta_melhor = np.zeros(3)
+    def __init__(self, atrasos_possiveis=[2, 3, 4, 5], sigma_e=1.5, lambda_rls=0.995):
+        
+        self.atrasos = atrasos_possiveis
+        self.sigma_e2 = sigma_e ** 2
+        
+        # λ FIXO
+        self.lambda_rls = lambda_rls
+        
+        self.theta_hat = {d0: np.array([0.0, 0.1, 0.05]) for d0 in self.atrasos}
+        self.P_cov = {d0: np.eye(3) * 10.0 for d0 in self.atrasos}
+        self.erros_quadraticos = {d0: 0.0 for d0 in self.atrasos}
 
-    def RLS(self, P_k_medido, I_k_anterior):
-        self.k += 1
-        self.P_histo = np.roll(self.P_histo, 1);  self.P_histo[0] = P_k_medido
-        self.I_histo = np.roll(self.I_histo, 1);  self.I_histo[0] = I_k_anterior
+    def estimar(self, P_k, P_k_minus_1, I_hist):
+        
+        melhor_d0 = self.atrasos[0]
+        menor_erro = float('inf')
+        erro_opt = 0.0
+        
+        for d0 in self.atrasos:
+            
+            # Vetor de regressão
+            phi = np.array([-P_k_minus_1, I_hist[d0], I_hist[2*d0]])
+            
+            # Predição
+            P_hat = np.dot(self.theta_hat[d0], phi)
+            erro = P_k - P_hat
 
-        fia = np.zeros(12)
-        for j in range(4):
-            ind  = 3 * j
-            d_j, m_j = self.d_vetor[j], self.m_vetor[j]
-            fia[ind] = -self.P_histo[1]
-            if d_j - 1       < len(self.I_histo): fia[ind + 1] = self.I_histo[d_j - 1]
-            if d_j + m_j - 1 < len(self.I_histo): fia[ind + 2] = self.I_histo[d_j + m_j - 1]
-
-        Soma_mi = 0
-        for j in range(4):
-            sl    = slice(3*j, 3*j+3)
-            fia_j = fia[sl];  Pant_j = self.Pant[sl, sl]
-            den   = self.lambda_val + fia_j @ Pant_j @ fia_j
-            if den == 0: den = 1e-9
-            kk_j  = (Pant_j @ fia_j) / den
-            teta_ant = self.teta_ea[sl]
-            self.teta_ea[sl] = teta_ant + kk_j * (P_k_medido - teta_ant @ fia_j)
-            self.Pant[sl, sl] = (np.eye(3) - np.outer(kk_j, fia_j)) @ Pant_j / self.lambda_val
-            ep = (P_k_medido - self.teta_ea[sl] @ fia_j)**2
-            self.histo_erro[self.k-1, j] = ep
-            janela = 20
-            ini = max(0, self.k - janela)
-            self.fator[j] = np.sum(self.histo_erro[ini:self.k, j])
-            Soma_mi += 1.0 / (self.fator[j] + 1e-9)
-
-        Med_adeq = np.array([1.0/(self.fator[j]+1e-9) for j in range(4)]) / (Soma_mi + 1e-9)
-        ind_cand = np.argmax(Med_adeq)
-        if Med_adeq[ind_cand] > 1.35 * Med_adeq[self.ind_melhor]:
-            self.ind_melhor = ind_cand
-
-        sl_best = slice(3*self.ind_melhor, 3*self.ind_melhor+3)
-        self.teta_melhor = self.teta_ea[sl_best]
-        incertezas = np.diagonal(self.Pant)[[1, 4, 7, 10]]
-        P_melhor = self.Pant[sl_best, sl_best].copy()
-        return self.teta_melhor, self.d_vetor[self.ind_melhor], self.m_vetor[self.ind_melhor], incertezas, self.fator.copy(), P_melhor
-
+            # Índice de adequabilidade
+            self.erros_quadraticos[d0] = 0.98 * self.erros_quadraticos[d0] + erro**2
+            
+            if self.erros_quadraticos[d0] < menor_erro:
+                menor_erro = self.erros_quadraticos[d0]
+                melhor_d0 = d0
+                erro_opt = erro
+            
+            # --- RLS com λ fixo ---
+            P = self.P_cov[d0]
+            
+            num = np.dot(P, phi)
+            den = max(self.lambda_rls + np.dot(phi, np.dot(P, phi)), 1e-6)
+            
+            K = num / den
+            
+            # Atualização dos parâmetros
+            self.theta_hat[d0] = self.theta_hat[d0] + K * erro
+            
+            # Atualização da covariância
+            self.P_cov[d0] = (P - np.outer(K, np.dot(phi, P))) / self.lambda_rls
+        
+        return melhor_d0, self.theta_hat[melhor_d0], self.P_cov[melhor_d0]

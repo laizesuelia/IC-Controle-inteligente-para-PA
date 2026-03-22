@@ -1,43 +1,73 @@
 import numpy as np
 import random
 
-class Controlador_GPC_Adaptativo:
-    def __init__(self, ro=1.5):
-        self.ro = ro
-        self.k  = 0
-        self.I_ante_1 = 0.0
-        self.I_histo  = np.zeros(100)
+class ControladorGPCAdaptativo:
 
-    def calcular_controle(self, P_ref, P_k_medido, teta_est, d_est, m_est, inovacao_k, P_cov):
-        # P_cov ignorado — usa RLS mas sem dualidade via covariância
-        self.k += 1
-        a1_est, b1_est, bm_est = teta_est
-        b1_ctrl = max(b1_est, 0.01)
+    def __init__(self, alpha_rho=5.0, beta_rho=0.90,
+                 rho_min=0.5, I_min=0.0, I_max=180.0):
 
-        if self.k <= 10:
-            PRBS = 10.0
-            if self.k > 5:
-                PRBS = 60 - (60 / 3.8) * abs(b1_est)
-            I_calculado = PRBS if random.random() > 0.5 else 0.0
-            I_calculado = np.clip(I_calculado, 0, 180)
-            self.I_histo = np.roll(self.I_histo, 1)
-            self.I_histo[0] = I_calculado
-            self.I_ante_1 = I_calculado
-            return I_calculado
+        # parâmetros da adaptação de rho
+        self.alpha_rho = alpha_rho
+        self.beta_rho = beta_rho
+        self.rho_min = rho_min
 
-        k0 = (-a1_est) ** d_est * P_k_medido
-        for i in range(1, d_est):
-            t1 = b1_ctrl * self.I_histo[i]         if i         < len(self.I_histo) else 0.0
-            t2 = bm_est  * self.I_histo[m_est + i] if m_est + i < len(self.I_histo) else 0.0
-            k0 += (-a1_est) ** i * (t1 + t2)
-        if m_est < len(self.I_histo):
-            k0 += bm_est * self.I_histo[m_est]
+        # limites fisiológicos da bomba
+        self.I_min = I_min
+        self.I_max = I_max
 
-        num = b1_ctrl * (P_ref - k0) + self.ro * self.I_ante_1
-        den = b1_ctrl ** 2 + self.ro
-        I_calculado = np.clip(num / max(den, 1e-6), 0, 180)
+        # estados internos
+        self.I_k_minus_1 = 0.0
+        self.energia_inovacao = 1.0
+        self.rho = rho_min
 
-        self.I_histo = np.roll(self.I_histo, 1)
-        self.I_histo[0] = I_calculado
-        self.I_ante_1 = I_calculado
-        return I_calculado
+    # -------------------------------------------------
+    # Cálculo do termo determinístico da predição
+    # -------------------------------------------------
+    def calcular_K0(self, theta_hat, d0, P_k, I_hist):
+
+        a1_hat, b1_hat, bm1_hat = theta_hat
+
+        K0 = ((-a1_hat)**d0) * P_k
+        K0 += bm1_hat * I_hist[d0]
+
+        for i in range(1, d0):
+            K0 += ((-a1_hat)**i) * b1_hat * I_hist[i]
+            K0 += ((-a1_hat)**i) * bm1_hat * I_hist[d0 + i]
+
+        return K0
+
+    # -------------------------------------------------
+    # Lei de controle GPC
+    # -------------------------------------------------
+    def calcular_controle(self, K0, theta_hat, P_ref):
+
+        b1_hat = theta_hat[1]
+
+        numerador = b1_hat * (P_ref - K0) + self.rho * self.I_k_minus_1
+        denominador = max((b1_hat**2) + self.rho, 1e-6)
+
+        I_k = numerador / denominador
+
+        # saturação da bomba
+        I_k = max(self.I_min, min(I_k, self.I_max))
+
+        # atualiza memória
+        self.I_k_minus_1 = I_k
+
+        return I_k
+
+    # -------------------------------------------------
+    # Atualização adaptativa de rho
+    # -------------------------------------------------
+    def atualizar_rho(self, erro):
+
+        self.energia_inovacao = (
+            self.beta_rho * self.energia_inovacao
+            + (1 - self.beta_rho) * (erro**2)
+        )
+
+        rho_calculado = self.alpha_rho / (self.energia_inovacao + 1e-6)
+
+        self.rho = max(self.rho_min, rho_calculado)
+
+        return self.rho

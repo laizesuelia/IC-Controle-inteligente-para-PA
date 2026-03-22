@@ -1,51 +1,38 @@
 import numpy as np
 import random
 
-class Controlador_32_Perturbacao:
-    def __init__(self, amplitude=8.0, taxa_decaimento=0.997, seed=None):
-        self.k        = 0
-        self.I_ante_1 = 0.0
-        self.I_histo  = np.zeros(100)
-        self._amp     = amplitude
-        self._decay   = taxa_decaimento
-        self._rng     = np.random.default_rng(seed)
+class Controlador_Perturbacao:
+    # amplitude inicial do ruído e taxa de decaimento (0.997 = perde 0.3% de força a cada passo)
+    def __init__(self, amplitude=8.0, taxa_decaimento=0.997, I_min=0.0, I_max=180.0):
+        self.amp = amplitude
+        self.decay = taxa_decaimento
+        self.I_min = I_min
+        self.I_max = I_max
 
-    def calcular_controle(self, P_ref, P_k_medido, teta_est, d_est, m_est, inovacao_k, P_cov):
-        self.k += 1
-        a1_est, b1_est, bm_est = teta_est
-        b1_ctrl = max(b1_est, 0.01)
+    # O cálculo de K0 é o padrão, usando a memória da planta
+    def calcular_K0(self, theta_hat, d0, P_k, I_hist):
+        a1_hat, b1_hat, bm1_hat = theta_hat
+        K0 = ((-a1_hat)**d0) * P_k
+        K0 += bm1_hat * I_hist[d0]
+        for i in range(1, d0):
+            K0 += ((-a1_hat)**i) * b1_hat * I_hist[i]
+            K0 += ((-a1_hat)**i) * bm1_hat * I_hist[d0 + i]
+        return K0
 
-        if self.k <= 10:
-            I_calculado = 30.0 if self._rng.integers(0, 2) == 1 else 0.0
-            I_calculado = np.clip(I_calculado, 0, 180)
-            self.I_histo = np.roll(self.I_histo, 1);  self.I_histo[0] = I_calculado
-            self.I_ante_1 = I_calculado
-            return I_calculado
+    def calcular_controle(self, K0, theta_hat, P_ref):
+        # Trava de segurança clínica para evitar divisão por zero
+        b1_ctrl = max(theta_hat[1], 0.01)
 
-        # K0 padrão
-        k0 = (-a1_est) ** d_est * P_k_medido
-        for i in range(1, d_est):
-            t1 = b1_ctrl * self.I_histo[i]         if i         < len(self.I_histo) else 0.0
-            t2 = bm_est  * self.I_histo[m_est + i] if m_est + i < len(self.I_histo) else 0.0
-            k0 += (-a1_est) ** i * (t1 + t2)
-        if m_est < len(self.I_histo):
-            k0 += bm_est * self.I_histo[m_est]
+        # 1. Lei de Controle Nominal (Variância Mínima / GPC puro sem rho)
+        I_mvc = (P_ref - K0) / b1_ctrl
 
-        # --- Controlador cauteloso (Eq. 2.23) como base ---
-        # p_b1: variância de b1 da matriz de covariância
-        # Cauteloso (Eq. 2.23) — base do 3.2
-        p_b1 = P_cov[1, 1]  # limita para não zerar o controle no início
-        IP_teta = P_cov[1, :] @ teta_est
+        # 2. Perturbação Ativa (Ruído PRBS artificial decrescente)
+        bit = 1 if np.random.rand() > 0.5 else -1
+        u_p = bit
+        
 
-        num_ca = b1_ctrl * (P_ref - k0) + IP_teta + p_b1 * self.I_ante_1
-        den_ca = b1_ctrl ** 2 + p_b1
-        u_ca   = num_ca / max(den_ca, 1e-6)
+        # 3. Sinal Final (Controle Nominal + Perturbação)
+        I_k = I_mvc + u_p
 
-        # --- Perturbação PRBS — dualidade explícita (Seção 3.2) ---
-        u_p       = self._amp * (self._rng.integers(0, 2) * 2 - 1)
-        self._amp *= self._decay
-
-        I_calculado = np.clip(u_ca + u_p, 0, 180)
-        self.I_histo = np.roll(self.I_histo, 1);  self.I_histo[0] = I_calculado
-        self.I_ante_1 = I_calculado
-        return I_calculado
+        # Saturação fisiológica
+        return max(self.I_min, min(I_k, self.I_max))

@@ -1,51 +1,59 @@
 import numpy as np
 import random
 
-class Controlador_35_Inovacoes:
-    """
-    Seção 3.5 de Jamier — IDC (Milito e Cadorin, 1982): Eq. 3.13.
-    Compromisso entre controlador cauteloso (λ=1) e equivalente à certeza (λ=0).
-    Usa P_cov diretamente — sem suavização, sem energia intermediária.
-    """
-    def __init__(self, lambda_idc=0.5):
+class ControladorIDC:
+
+    def __init__(self, lambda_idc=1, I_min=0.0, I_max=180.0):
+        
+        # parâmetro dual
         self.lambda_idc = lambda_idc
-        self.k          = 0
-        self.I_ante_1   = 0.0
-        self.I_histo    = np.zeros(100)
+        
+        # limites fisiológicos
+        self.I_min = I_min
+        self.I_max = I_max
 
-    def calcular_controle(self, P_ref, P_k_medido, teta_est, d_est, m_est, inovacao_k, P_cov):
-        self.k += 1
-        a1_est, b1_est, bm_est = teta_est
-        b1_ctrl = max(b1_est, 0.01)
+    # -------------------------------------------------
+    # Cálculo do termo determinístico da predição
+    # -------------------------------------------------
+    def calcular_K0(self, theta_hat, d0, P_k, I_hist):
 
-        if self.k <= 10:
-            PRBS = 10.0
-            if self.k > 5:
-                PRBS = 60 - (60 / 3.8) * abs(b1_est)
-            I_calculado = PRBS if random.random() > 0.5 else 0.0
-            I_calculado = np.clip(I_calculado, 0, 180)
-            self.I_histo = np.roll(self.I_histo, 1);  self.I_histo[0] = I_calculado
-            self.I_ante_1 = I_calculado
-            return I_calculado
+        a1_hat, b1_hat, bm1_hat = theta_hat
 
-        k0 = (-a1_est) ** d_est * P_k_medido
-        for i in range(1, d_est):
-            t1 = b1_ctrl * self.I_histo[i]         if i         < len(self.I_histo) else 0.0
-            t2 = bm_est  * self.I_histo[m_est + i] if m_est + i < len(self.I_histo) else 0.0
-            k0 += (-a1_est) ** i * (t1 + t2)
-        if m_est < len(self.I_histo):
-            k0 += bm_est * self.I_histo[m_est]
+        K0 = ((-a1_hat)**d0) * P_k
+        K0 += bm1_hat * I_hist[d0]
 
-        # Eq. 3.13 de Jamier — IDC
-        lam     = self.lambda_idc
-        p_b1 = P_cov[1, 1]  # limita para não zerar o controle no início
-        IP_teta = P_cov[1, :] @ teta_est
+        for i in range(1, d0):
+            K0 += ((-a1_hat)**i) * b1_hat * I_hist[i]
+            K0 += ((-a1_hat)**i) * bm1_hat * I_hist[d0 + i]
 
-        num = b1_ctrl * (P_ref - k0) + (1 - lam) * IP_teta + (1 - lam) * p_b1 * self.I_ante_1
-        den = b1_ctrl ** 2 + (1 - lam) * p_b1
+        return K0
 
-        I_calculado = np.clip(num / max(den, 1e-6), 0, 180)
+    # -------------------------------------------------
+    # Lei de controle IDC
+    # -------------------------------------------------
+    def calcular_controle(self, K0, theta_hat, P_cov, P_ref):
 
-        self.I_histo = np.roll(self.I_histo, 1);  self.I_histo[0] = I_calculado
-        self.I_ante_1 = I_calculado
-        return I_calculado
+        b1_hat = theta_hat[1]
+
+        # variância do parâmetro b1
+        p_b1 = P_cov[1, 1]
+
+        # termo dual
+        I_P_theta = np.dot(P_cov[1, :], theta_hat)
+
+        numerador = (
+            b1_hat * (P_ref - K0)
+            + (1 - self.lambda_idc) * I_P_theta
+        )
+
+        denominador = max(
+            (b1_hat**2) + (1 - self.lambda_idc) * p_b1,
+            1e-6
+        )
+
+        I_k = numerador / denominador
+
+        # saturação fisiológica
+        I_k = max(self.I_min, min(I_k, self.I_max))
+
+        return I_k
